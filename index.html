@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RRHH · MISAGI S.A.C.</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { sans: ['Inter','system-ui','sans-serif'] },
+  colors: { navy: {50:'#f1f5fb',100:'#dde8f5',200:'#bcd0e9',300:'#8fb0d8',400:'#5c89c1',500:'#3a69a8',600:'#2d5288',700:'#26426d',800:'#23395b',900:'#1d3a5f',950:'#0f1e33'} }
+}}};
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+html { -webkit-font-smoothing: antialiased; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
+@keyframes slideIn { from{opacity:0;transform:translateX(12px)} to{opacity:1;transform:none} }
+.fade-in{animation:fadeIn .2s ease both}
+.slide-in{animation:slideIn .22s ease both}
+@keyframes shimmer{100%{transform:translateX(100%)}}
+.skel{position:relative;overflow:hidden;background:#eef2f7;border-radius:4px}
+.skel::after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.65),transparent);animation:shimmer 1.3s infinite}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:99px}
+.row-hover:hover{background:#f8fafd}
+.navtab{position:relative;padding:10px 4px;font-size:13px;font-weight:500;color:#94a3b8;cursor:pointer;transition:color .15s;white-space:nowrap}
+.navtab:hover{color:#475569}
+.navtab.active{color:#1d3a5f}
+.navtab.active::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;background:#1d3a5f;border-radius:2px}
+.lbl{display:block;font-size:12px;font-weight:500;color:#475569;margin-bottom:4px}
+.inp{width:100%;border-radius:8px;border:1px solid #e2e8f0;padding:7px 10px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s;color:#1e293b}
+.inp:focus{border-color:#3a69a8;box-shadow:0 0 0 3px #dde8f5}
+textarea.inp{min-height:60px}
+.alert-card{transition:transform .12s ease, box-shadow .12s ease}
+.alert-card:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(15,30,51,.06)}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+
+<!-- TOPBAR -->
+<header class="sticky top-0 z-30 bg-white border-b border-slate-200">
+  <div class="px-6 flex items-center justify-between gap-4" style="height:58px">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="h-9 w-9 rounded-lg bg-navy-900 text-white grid place-items-center font-bold text-sm shrink-0">M</div>
+      <div class="min-w-0">
+        <h1 class="text-[15px] font-semibold text-slate-900 leading-tight truncate">Sistema de RRHH</h1>
+        <p class="text-[11px] text-slate-400 leading-none mt-0.5">MISAGI S.A.C. · RUC 20610685847</p>
+      </div>
+    </div>
+    <button id="btnNew" class="inline-flex items-center gap-1.5 rounded-lg bg-navy-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-navy-800 transition shrink-0">
+      <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
+      <span class="hidden sm:inline">Nuevo colaborador</span><span class="sm:hidden">Nuevo</span>
+    </button>
+  </div>
+  <!-- NAV TABS -->
+  <div class="px-6 flex items-center gap-6 border-t border-slate-100 overflow-x-auto">
+    <div class="navtab active" data-view="dashboard">
+      <span class="inline-flex items-center gap-1.5">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="6" height="8" rx="1.5"/><rect x="11" y="3" width="6" height="5" rx="1.5"/><rect x="11" y="10" width="6" height="7" rx="1.5"/><rect x="3" y="13" width="6" height="4" rx="1.5"/></svg>
+        Dashboard
+      </span>
+    </div>
+    <div class="navtab" data-view="alertas">
+      <span class="inline-flex items-center gap-1.5">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3a4.5 4.5 0 00-4.5 4.5c0 3-1.5 4.5-1.5 4.5h12s-1.5-1.5-1.5-4.5A4.5 4.5 0 0010 3zM8.5 15a1.5 1.5 0 003 0"/></svg>
+        Alertas
+        <span id="alertBadge" class="hidden min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold grid place-items-center"></span>
+      </span>
+    </div>
+    <div class="navtab" data-view="personal">
+      <span class="inline-flex items-center gap-1.5">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="6.5" r="3"/><path d="M4 16.5c0-3 2.7-5 6-5s6 2 6 5"/></svg>
+        Personal
+      </span>
+    </div>
+    <div class="navtab" data-view="conductores">
+      <span class="inline-flex items-center gap-1.5">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.5-5A2 2 0 016.4 6.5h7.2a2 2 0 011.9 1.5L17 13M5 13h10a1.5 1.5 0 011.5 1.5V16h-2a1.5 1.5 0 01-3 0H8.5a1.5 1.5 0 01-3 0h-2v-1.5A1.5 1.5 0 015 13z"/></svg>
+        Conductores
+      </span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ VIEW: DASHBOARD ============ -->
+<div id="view-dashboard" class="view px-6 py-5">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Total personal</p>
+      <p id="kpiTotal" class="text-2xl font-bold text-navy-900 mt-0.5">—</p>
+      <p id="kpiTotalSub" class="text-[11px] text-slate-400 mt-0.5"></p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Planilla mensual</p>
+      <p id="kpiPlanilla" class="text-2xl font-bold text-emerald-600 mt-0.5">—</p>
+      <p id="kpiPlanillaSub" class="text-[11px] text-slate-400 mt-0.5"></p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Alertas críticas</p>
+      <p id="kpiCriticas" class="text-2xl font-bold text-rose-600 mt-0.5">—</p>
+      <p class="text-[11px] text-slate-400 mt-0.5">requieren acción</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">EMO aptos</p>
+      <p id="kpiEmo" class="text-2xl font-bold text-navy-600 mt-0.5">—</p>
+      <p class="text-[11px] text-slate-400 mt-0.5">del total evaluado</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">Personal por categoría</h3>
+      <div style="height:220px"><canvas id="chartCategoria"></canvas></div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">Costo laboral por empresa</h3>
+      <div style="height:220px"><canvas id="chartEmpresa"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">Headcount por departamento</h3>
+      <div style="height:240px"><canvas id="chartDepto"></canvas></div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">Estado EMO de la flota</h3>
+      <div style="height:240px"><canvas id="chartEmo"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ VIEW: ALERTAS ============ -->
+<div id="view-alertas" class="view hidden px-6 py-5">
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    <div class="flex items-center gap-1.5 bg-white rounded-lg border border-slate-200 p-1">
+      <button class="alert-filter px-3 py-1.5 rounded-md text-[13px] font-medium transition bg-navy-900 text-white" data-sev="">Todas</button>
+      <button class="alert-filter px-3 py-1.5 rounded-md text-[13px] font-medium transition text-slate-500 hover:bg-slate-100" data-sev="rojo">🔴 Críticas</button>
+      <button class="alert-filter px-3 py-1.5 rounded-md text-[13px] font-medium transition text-slate-500 hover:bg-slate-100" data-sev="amarillo">🟡 Atención</button>
+      <button class="alert-filter px-3 py-1.5 rounded-md text-[13px] font-medium transition text-slate-500 hover:bg-slate-100" data-sev="verde">🟢 Correctas</button>
+    </div>
+    <select id="alertTipoFilter" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-navy-400">
+      <option value="">Todos los tipos</option>
+      <option value="Contrato">Contratos</option>
+      <option value="EMO">EMO</option>
+      <option value="Vacaciones">Vacaciones</option>
+      <option value="Cumpleaños">Cumpleaños</option>
+      <option value="Licencia">Licencias</option>
+      <option value="Datos">Datos faltantes</option>
+    </select>
+    <span id="alertCount" class="text-[13px] text-slate-400 ml-auto"></span>
+  </div>
+  <div id="alertList" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+</div>
+
+<!-- ============ VIEW: PERSONAL ============ -->
+<div id="view-personal" class="view hidden px-6 py-5">
+  <div class="flex gap-4">
+    <div class="flex-1 min-w-0">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div class="relative flex-1 min-w-[200px]">
+          <svg class="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="6"/><path d="M14 14l3 3" stroke-linecap="round"/></svg>
+          <input id="search" type="text" placeholder="Buscar nombre, DNI, cargo…" class="w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:border-navy-400 focus:ring-2 focus:ring-navy-100 transition" />
+        </div>
+        <select id="filterCat" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-navy-400">
+          <option value="">Todas las categorías</option>
+          <option value="Administrativo">Administrativo</option>
+          <option value="Conductor">Conductor</option>
+          <option value="Mantenimiento">Mantenimiento</option>
+        </select>
+        <select id="filterEmp" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-navy-400">
+          <option value="">Todas las empresas</option>
+          <option value="MISAGI SAC">MISAGI SAC</option>
+          <option value="MISAGI CARGO">MISAGI CARGO</option>
+        </select>
+        <span id="count" class="text-[13px] text-slate-400 tabular-nums ml-auto"></span>
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left border-b border-slate-100 bg-slate-50/70">
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Colaborador</th>
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Cargo</th>
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Categoría</th>
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 hidden lg:table-cell">Empresa</th>
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 hidden xl:table-cell">Sueldo final</th>
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Estado</th>
+                <th class="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 text-right">Acción</th>
+              </tr>
+            </thead>
+            <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div id="detailPanel" class="hidden w-[380px] shrink-0 rounded-xl border border-slate-200 bg-white overflow-hidden self-start sticky top-[120px]" style="max-height:calc(100vh - 135px);overflow-y:auto"></div>
+  </div>
+</div>
+
+<!-- ============ VIEW: CONDUCTORES ============ -->
+<div id="view-conductores" class="view hidden px-6 py-5">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Conductores</p>
+      <p id="condTotal" class="text-2xl font-bold text-navy-900 mt-0.5">—</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Aptos EMO</p>
+      <p id="condAptos" class="text-2xl font-bold text-emerald-600 mt-0.5">—</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">No aptos / pendientes</p>
+      <p id="condNoAptos" class="text-2xl font-bold text-rose-600 mt-0.5">—</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 px-4 py-3">
+      <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Contratos por renovar (60d)</p>
+      <p id="condRenovar" class="text-2xl font-bold text-amber-600 mt-0.5">—</p>
+    </div>
+  </div>
+  <div id="condGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+</div>
+
+<!-- MODAL CREATE/EDIT (igual que v2) -->
+<div id="modal" class="fixed inset-0 z-40 hidden">
+  <div data-close class="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"></div>
+  <div class="relative h-full w-full flex items-center justify-center p-4">
+    <div class="w-full max-w-2xl rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h2 id="modalTitle" class="text-base font-semibold text-slate-900">Nuevo colaborador</h2>
+        <button data-close class="text-slate-400 hover:text-slate-600 transition p-1 -mr-1 rounded" aria-label="Cerrar">
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+        </button>
+      </div>
+      <form id="form" class="px-6 py-4 overflow-y-auto">
+        <input type="hidden" id="f_id" />
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-3">Datos personales</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+          <div class="sm:col-span-2"><label class="lbl">Apellidos y nombres <span class="text-rose-500">*</span></label><input id="f_nombres_completos" required type="text" placeholder="Apellidos, Nombres" class="inp" /></div>
+          <div><label class="lbl">DNI</label><input id="f_dni" type="text" inputmode="numeric" class="inp" /></div>
+          <div><label class="lbl">Fecha nacimiento</label><input id="f_fecha_nacimiento" type="date" class="inp" /></div>
+          <div><label class="lbl">Estado civil</label><select id="f_estado_civil" class="inp bg-white"><option value="">—</option><option>SOLTERO</option><option>CASADO</option><option>CONVIVIENTE</option><option>DIVORCIADO</option><option>SEPARADO</option></select></div>
+          <div><label class="lbl">N° hijos</label><input id="f_n_hijos" type="number" min="0" class="inp" /></div>
+          <div><label class="lbl">Celular</label><input id="f_celular" type="text" class="inp" /></div>
+          <div><label class="lbl">Correo</label><input id="f_email" type="email" class="inp" /></div>
+          <div class="sm:col-span-2"><label class="lbl">Dirección</label><input id="f_direccion" type="text" class="inp" /></div>
+          <div><label class="lbl">Tipo de sangre</label><input id="f_tipo_sangre" type="text" placeholder="O+" class="inp" /></div>
+          <div><label class="lbl">Contacto familiar</label><input id="f_contacto_familiar" type="text" class="inp" /></div>
+        </div>
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-3">Datos laborales</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+          <div><label class="lbl">Cargo <span class="text-rose-500">*</span></label><input id="f_cargo" required type="text" class="inp" /></div>
+          <div><label class="lbl">Categoría <span class="text-rose-500">*</span></label><select id="f_categoria" required class="inp bg-white"><option value="Administrativo">Administrativo</option><option value="Conductor">Conductor</option><option value="Mantenimiento">Mantenimiento</option></select></div>
+          <div><label class="lbl">Departamento</label><input id="f_departamento" type="text" class="inp" /></div>
+          <div><label class="lbl">Empresa</label><select id="f_empresa" class="inp bg-white"><option value="MISAGI SAC">MISAGI SAC</option><option value="MISAGI CARGO">MISAGI CARGO</option></select></div>
+          <div><label class="lbl">Fecha de ingreso</label><input id="f_fecha_ingreso" type="date" class="inp" /></div>
+          <div><label class="lbl">Renovación contrato</label><input id="f_renovacion_contrato" type="date" class="inp" /></div>
+          <div><label class="lbl">Tipo de contrato</label><select id="f_tipo_contrato" class="inp bg-white"><option value="">—</option><option>Sin contrato</option><option>Contrato por servicio especifico</option><option>Contrato por necesidad de mercado</option><option>Contrato a plazo indeterminado</option></select></div>
+          <div><label class="lbl">Licencia</label><input id="f_licencia" type="text" class="inp" /></div>
+          <div><label class="lbl">Vcto. licencia</label><input id="f_licencia_vcto" type="date" class="inp" /></div>
+          <div><label class="lbl">Estado</label><select id="f_estado" class="inp bg-white"><option value="Activo">Activo</option><option value="Inactivo">Inactivo</option></select></div>
+        </div>
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-3">Remuneración</p>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+          <div><label class="lbl">Sueldo base</label><input id="f_sueldo_base" type="number" min="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Bono</label><input id="f_bono" type="number" min="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Asig. familiar</label><input id="f_asignacion_familiar" type="number" min="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Sueldo final</label><input id="f_sueldo_final" type="number" min="0" step="0.01" class="inp" /></div>
+          <div class="col-span-2"><label class="lbl">Régimen pensionario</label><select id="f_regimen_pensionario" class="inp bg-white"><option value="">—</option><option>ONP</option><option>PRIMA</option><option>HABITAT</option><option>INTEGRA</option><option>PROFUTURO</option></select></div>
+          <div class="col-span-2"><label class="lbl">CUSPP</label><input id="f_cuspp" type="text" class="inp" /></div>
+        </div>
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-3">Salud / EMO</p>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+          <div><label class="lbl">Peso (kg)</label><input id="f_peso" type="number" step="0.1" class="inp" /></div>
+          <div><label class="lbl">Estatura (m)</label><input id="f_estatura" type="number" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Resultado EMO</label><select id="f_apto_empo" class="inp bg-white"><option value="">—</option><option>APTO</option><option>APTO CON RESTRINCCIONES</option><option>NO PASO EMPO</option><option>NO REALIZADO</option></select></div>
+          <div><label class="lbl">Vcto. EMO</label><input id="f_fecha_vcto_emo" type="date" class="inp" /></div>
+        </div>
+        <div><label class="lbl">Observaciones</label><textarea id="f_observaciones" rows="2" class="inp resize-none"></textarea></div>
+      </form>
+      <div class="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button data-close type="button" class="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition">Cancelar</button>
+        <button id="btnSave" type="submit" form="form" class="inline-flex items-center gap-2 rounded-lg bg-navy-900 px-4 py-2 text-sm font-medium text-white hover:bg-navy-800 transition disabled:opacity-60"><span id="btnSaveLabel">Guardar</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DELETE -->
+<div id="modalDelete" class="fixed inset-0 z-40 hidden">
+  <div data-close-del class="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"></div>
+  <div class="relative h-full w-full flex items-center justify-center p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 p-6 text-center">
+      <div class="mx-auto h-11 w-11 rounded-full bg-rose-50 grid place-items-center mb-3">
+        <svg class="h-5 w-5 text-rose-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 7h8M8 7V5h4v2M8 10v5M12 10v5M5 7l1 9h8l1-9"/></svg>
+      </div>
+      <h2 class="text-base font-semibold text-slate-900">Eliminar colaborador</h2>
+      <p class="text-sm text-slate-500 mt-1">¿Eliminar a <span id="delName" class="font-medium text-slate-700"></span>? Esta acción no se puede deshacer.</p>
+      <div class="flex items-center justify-center gap-2 mt-5">
+        <button data-close-del class="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition">Cancelar</button>
+        <button id="btnConfirmDelete" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 transition">Eliminar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden pointer-events-none">
+  <div class="rounded-lg bg-slate-900 text-white text-sm px-4 py-2.5 shadow-lg"><span id="toastMsg"></span></div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
