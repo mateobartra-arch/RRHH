@@ -5,7 +5,7 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, addDoc,
+  getFirestore, collection, getDocs, addDoc, setDoc,
   updateDoc, deleteDoc, doc, query, orderBy, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -21,6 +21,7 @@ const COLLECTION = "personal_misagi";
 const app    = initializeApp(firebaseConfig);
 const db     = getFirestore(app);
 const colRef = collection(db, COLLECTION);
+const conductaRef = collection(db, "conducta_misagi");
 
 // ── Datos iniciales (auto-carga si la coleccion esta vacia) ──
 const SEED_DATA = [
@@ -589,6 +590,7 @@ const state = {
   all: [], alerts: [],
   search:"", categoria:"", empresa:"",
   alertSev:"", alertTipo:"",
+  conducta:[], condEmpFilter:"", condTipoFilter:"", boleta:null,
   loading:true, error:null, selected:null, view:"dashboard"
 };
 let charts = {};
@@ -634,6 +636,10 @@ function toast(msg, err=false) {
 }
 
 // ── Firestore CRUD ────────────────────────────────────────────
+// ID determinista por colaborador: evita duplicados aunque 2 dispositivos
+// hagan la carga inicial al mismo tiempo (setDoc sobre el mismo ID es idempotente)
+const seedId = p => 'emp_' + (p.dni || String(p.nombres_completos).toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40));
+
 async function fetchAll() {
   state.loading=true; renderAll();
   try {
@@ -641,19 +647,50 @@ async function fetchAll() {
     try { snap = await getDocs(query(colRef, orderBy('nombres_completos'))); }
     catch { snap = await getDocs(colRef); }
 
-    // AUTO-SEED: si la coleccion esta vacia, cargar los datos iniciales
     if (snap.empty) {
+      // AUTO-SEED idempotente: setDoc con ID determinista → imposible duplicar
       toast('Primera carga: registrando ' + SEED_DATA.length + ' colaboradores…');
       for (const p of SEED_DATA) {
-        const ref = await addDoc(colRef, { ...p, _created: serverTimestamp() });
-        state.all.push({ id: ref.id, ...p });
+        const id = seedId(p);
+        await setDoc(doc(db, COLLECTION, id), { ...p, _created: serverTimestamp() });
+        state.all.push({ id, ...p });
       }
       state.all.sort((a,b)=>String(a.nombres_completos).localeCompare(b.nombres_completos));
       toast('✓ ' + SEED_DATA.length + ' colaboradores cargados');
     } else {
       state.all = snap.docs.map(d=>({id:d.id,...d.data()}));
+      // AUTO-DEDUPE: limpia duplicados creados por versiones anteriores.
+      // Agrupa por DNI (o nombre); conserva el doc editado más recientemente
+      // (o el más antiguo si ninguno fue editado) y elimina el resto.
+      const groups = {};
+      for (const p of state.all) {
+        const k = p.dni || String(p.nombres_completos||'').toLowerCase().trim();
+        (groups[k] = groups[k] || []).push(p);
+      }
+      const toDelete = [];
+      const keep = [];
+      for (const k in groups) {
+        const g = groups[k];
+        if (g.length === 1) { keep.push(g[0]); continue; }
+        g.sort((a,b)=>{
+          const au=a._updated?.seconds||0, bu=b._updated?.seconds||0;
+          if(au!==bu) return bu-au;                       // editado más reciente primero
+          const ac=a._created?.seconds||0, bc=b._created?.seconds||0;
+          return ac-bc;                                    // si no, el más antiguo
+        });
+        keep.push(g[0]);
+        toDelete.push(...g.slice(1));
+      }
+      if (toDelete.length) {
+        toast('Limpiando ' + toDelete.length + ' registros duplicados…');
+        for (const d_ of toDelete) { try { await deleteDoc(doc(db, COLLECTION, d_.id)); } catch(_){} }
+        state.all = keep;
+        toast('✓ Duplicados eliminados (' + toDelete.length + ')');
+      }
+      state.all.sort((a,b)=>String(a.nombres_completos||'').localeCompare(String(b.nombres_completos||'')));
     }
     state.error=null;
+    await fetchConducta();
   } catch(e) {
     state.error = e.code==='permission-denied' ? 'Sin permisos. Revisa reglas Firestore.' : 'Error: '+e.message;
   } finally {
@@ -1065,6 +1102,158 @@ function renderDetail(p) {
   panel.querySelectorAll('[data-del]').forEach(el=>el.addEventListener('click',()=>openDelete(state.all.find(x=>x.id===el.dataset.del))));
 }
 
+
+// ════════════════════════════════════════════════════════════════
+//  MÓDULO: BOLETAS DE PAGO
+// ════════════════════════════════════════════════════════════════
+const MESES = {  '01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
+  '07':'JULIO','08':'AGOSTO','09':'SEPTIEMBRE','10':'OCTUBRE','11':'NOVIEMBRE','12':'DICIEMBRE' };
+
+function tasaPension(regimen) {
+  const r = (regimen||'').toUpperCase();
+  if (r === 'ONP') return { nombre:'ONP 13%', tasa:0.13 };
+  if (['PRIMA','HABITAT','INTEGRA','PROFUTURO'].includes(r)) return { nombre:'AFP '+r+' 11.74%', tasa:0.1174 };
+  return { nombre:'Sin régimen', tasa:0 };
+}
+
+function fillBoletasSelect() {
+  const sel = $("bolEmp");
+  const activos = state.all.filter(p=>String(p.estado).toLowerCase()==='activo')
+    .sort((a,b)=>String(a.nombres_completos).localeCompare(b.nombres_completos));
+  sel.innerHTML = '<option value="">— Seleccionar —</option>' +
+    activos.map(p=>`<option value="${p.id}">${esc(p.nombres_completos)} · ${esc(p.cargo||'')}</option>`).join('');
+}
+
+function generarBoleta() {
+  const p = state.all.find(x=>x.id===$("bolEmp").value);
+  if(!p){ toast('Selecciona un colaborador', true); return; }
+  const mes = $("bolMes").value, anio = $("bolAnio").value;
+  const dias = parseFloat($("bolDias").value)||30;
+  const he = parseFloat($("bolHE").value)||0;
+  const otros = parseFloat($("bolOtros").value)||0;
+  const descAdic = parseFloat($("bolDesc").value)||0;
+
+  const base = p.sueldo_base||0;
+  const proporcional = base * (dias/30);
+  const bono = p.bono||0;
+  const asig = p.asignacion_familiar||0;
+  const totalIngresos = proporcional + bono + asig + he + otros;
+
+  const pen = tasaPension(p.regimen_pensionario);
+  const dctoPension = totalIngresos * pen.tasa;
+  const totalDesc = dctoPension + descAdic;
+  const neto = totalIngresos - totalDesc;
+  const essalud = totalIngresos * 0.09;
+
+  const F = v => 'S/ ' + v.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  $("bolPreview").innerHTML = `
+  <div class="w-full max-w-[640px] mx-auto text-[12px]" style="font-family:Inter,sans-serif">
+    <div class="flex items-start justify-between border-b-2 border-navy-900 pb-3 mb-4">
+      <div>
+        <p class="font-bold text-navy-900 text-base">${esc(p.empresa||'MISAGI S.A.C.')}</p>
+        <p class="text-slate-500 text-[11px]">RUC 20610685847 · Cerro Colorado, Arequipa</p>
+      </div>
+      <div class="text-right">
+        <p class="font-bold text-slate-800">BOLETA DE PAGO</p>
+        <p class="text-slate-500 text-[11px]">${MESES[mes]} ${anio}</p>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-x-6 gap-y-1 mb-4">
+      <p><span class="text-slate-400">Colaborador:</span> <strong>${esc(p.nombres_completos)}</strong></p>
+      <p><span class="text-slate-400">DNI:</span> ${esc(p.dni||'—')}</p>
+      <p><span class="text-slate-400">Cargo:</span> ${esc(p.cargo||'—')}</p>
+      <p><span class="text-slate-400">Fecha ingreso:</span> ${fmtDate(p.fecha_ingreso)}</p>
+      <p><span class="text-slate-400">Régimen:</span> ${esc(pen.nombre)}</p>
+      <p><span class="text-slate-400">Días laborados:</span> ${dias}</p>
+    </div>
+    <table class="w-full mb-1">
+      <tr class="bg-navy-900 text-white"><td class="px-3 py-1.5 font-semibold" colspan="2">INGRESOS</td></tr>
+      <tr class="border-b border-slate-100"><td class="px-3 py-1.5">Sueldo básico ${dias<30?`(proporcional ${dias}/30)`:''}</td><td class="px-3 py-1.5 text-right font-mono">${F(proporcional)}</td></tr>
+      ${bono?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Bonificación</td><td class="px-3 py-1.5 text-right font-mono">${F(bono)}</td></tr>`:''}
+      ${asig?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Asignación familiar</td><td class="px-3 py-1.5 text-right font-mono">${F(asig)}</td></tr>`:''}
+      ${he?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Horas extras</td><td class="px-3 py-1.5 text-right font-mono">${F(he)}</td></tr>`:''}
+      ${otros?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Otros ingresos</td><td class="px-3 py-1.5 text-right font-mono">${F(otros)}</td></tr>`:''}
+      <tr class="bg-slate-50 font-semibold"><td class="px-3 py-1.5">TOTAL INGRESOS</td><td class="px-3 py-1.5 text-right font-mono">${F(totalIngresos)}</td></tr>
+      <tr class="bg-navy-900 text-white"><td class="px-3 py-1.5 font-semibold" colspan="2">DESCUENTOS</td></tr>
+      <tr class="border-b border-slate-100"><td class="px-3 py-1.5">${esc(pen.nombre)}</td><td class="px-3 py-1.5 text-right font-mono">${F(dctoPension)}</td></tr>
+      ${descAdic?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Descuentos / adelantos</td><td class="px-3 py-1.5 text-right font-mono">${F(descAdic)}</td></tr>`:''}
+      <tr class="bg-slate-50 font-semibold"><td class="px-3 py-1.5">TOTAL DESCUENTOS</td><td class="px-3 py-1.5 text-right font-mono">${F(totalDesc)}</td></tr>
+      <tr class="bg-emerald-600 text-white text-sm font-bold"><td class="px-3 py-2">NETO A PAGAR</td><td class="px-3 py-2 text-right font-mono">${F(neto)}</td></tr>
+    </table>
+    <p class="text-[10px] text-slate-400 mb-5">Aporte empleador EsSalud (9%): ${F(essalud)} — no se descuenta al trabajador. Documento referencial generado por el Sistema RRHH MISAGI.</p>
+    <div class="grid grid-cols-2 gap-10 mt-10 pt-6">
+      <div class="border-t border-slate-300 pt-1 text-center text-[11px] text-slate-500">EMPLEADOR</div>
+      <div class="border-t border-slate-300 pt-1 text-center text-[11px] text-slate-500">TRABAJADOR<br>${esc(p.nombres_completos)} · DNI ${esc(p.dni||'')}</div>
+    </div>
+  </div>`;
+  $("bolImprimir").classList.remove('hidden');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  MÓDULO: HISTORIAL DE CONDUCTA
+// ════════════════════════════════════════════════════════════════
+async function fetchConducta() {
+  try {
+    const snap = await getDocs(conductaRef);
+    state.conducta = snap.docs.map(d=>({id:d.id,...d.data()}))
+      .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+  } catch(e) { console.warn('conducta:', e.message); state.conducta=[]; }
+}
+
+const TIPO_CONDUCTA_STYLE = {
+  'Llamada de atención verbal':  'bg-amber-50 text-amber-700 ring-amber-200',
+  'Llamada de atención escrita': 'bg-amber-50 text-amber-700 ring-amber-200',
+  'Memorándum':                  'bg-rose-50 text-rose-700 ring-rose-200',
+  'Suspensión':                  'bg-rose-100 text-rose-800 ring-rose-300',
+  'Descargo':                    'bg-navy-50 text-navy-700 ring-navy-200',
+  'Felicitación':                'bg-emerald-50 text-emerald-700 ring-emerald-200',
+};
+
+function fillConductaSelects() {
+  const activos = state.all.slice().sort((a,b)=>String(a.nombres_completos).localeCompare(b.nombres_completos));
+  const opts = activos.map(p=>`<option value="${esc(p.dni||p.id)}">${esc(p.nombres_completos)}</option>`).join('');
+  $("c_dni").innerHTML = '<option value="">— Seleccionar —</option>' + opts;
+  $("condFiltroEmp").innerHTML = '<option value="">Todos los colaboradores</option>' + opts;
+}
+
+function renderConducta() {
+  const list = $("conductaList");
+  let rows = state.conducta;
+  if (state.condEmpFilter)  rows = rows.filter(c=>c.dni===state.condEmpFilter);
+  if (state.condTipoFilter) rows = rows.filter(c=>c.tipo===state.condTipoFilter);
+  if (!rows.length) {
+    list.innerHTML = '<div class="bg-white rounded-xl border border-slate-200 py-12 text-center text-sm text-slate-400">Sin incidencias registradas' + (state.condEmpFilter||state.condTipoFilter?' con estos filtros':'') + '.</div>';
+    return;
+  }
+  list.innerHTML = rows.map(c=>{
+    const sty = TIPO_CONDUCTA_STYLE[c.tipo] || 'bg-slate-100 text-slate-600 ring-slate-200';
+    return `<div class="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-start gap-3">
+      <div class="h-9 w-9 shrink-0 rounded-full bg-navy-900 text-white grid place-items-center text-[10px] font-semibold mt-0.5">${esc(initials(c.nombre))}</div>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2">
+          <p class="text-sm font-medium text-slate-800">${esc(c.nombre)}</p>
+          <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${sty}">${esc(c.tipo)}</span>
+          <span class="text-[12px] text-slate-400 ml-auto">${fmtDate(c.fecha)}</span>
+        </div>
+        <p class="text-[13px] text-slate-700 mt-1">${esc(c.motivo||'')}</p>
+        ${c.detalle?`<p class="text-[12px] text-slate-500 mt-0.5">${esc(c.detalle)}</p>`:''}
+        ${c.documento?`<p class="text-[11px] text-slate-400 mt-1 font-mono">${esc(c.documento)}</p>`:''}
+      </div>
+      <button data-del-cond="${c.id}" class="p-1.5 rounded text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition shrink-0" aria-label="Eliminar">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 7h8M8 7V5h4v2M8 10v5M12 10v5M5 7l1 9h8l1-9"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('[data-del-cond]').forEach(el=>el.addEventListener('click', async ()=>{
+    if(!confirm('¿Eliminar este registro de conducta?')) return;
+    try { await deleteDoc(doc(db,'conducta_misagi',el.dataset.delCond));
+      state.conducta = state.conducta.filter(x=>x.id!==el.dataset.delCond);
+      renderConducta(); toast('Registro eliminado');
+    } catch(e){ toast('Error al eliminar',true); }
+  }));
+}
+
 // ════════════════════════════════════════════════════════════════
 //  VIEW SWITCHING
 // ════════════════════════════════════════════════════════════════
@@ -1078,6 +1267,9 @@ function switchView(v) {
   if(v==='alertas') renderAlerts();
   if(v==='conductores') renderConductores();
   if(v==='personal') renderTable();
+  if(v==='boletas') fillBoletasSelect();
+  if(v==='conducta'){ fillConductaSelects(); renderConducta(); }
+  // CTS está integrado nativo en el DOM; no requiere inicialización
 }
 
 function renderAll() {
@@ -1169,5 +1361,87 @@ $("tbody").addEventListener('click',e=>{
   if(tr){const p=state.all.find(x=>x.id===tr.dataset.id);if(p){renderDetail(p);renderTable();}}
 });
 
+// ── Eventos: Boletas ──
+$("bolGenerar").addEventListener('click', generarBoleta);
+$("bolImprimir").addEventListener('click', ()=>{
+  document.body.classList.add('printing-boleta');
+  const clean = ()=>document.body.classList.remove('printing-boleta');
+  window.addEventListener('afterprint', clean, { once:true });
+  window.print();
+  setTimeout(clean, 2000); // respaldo por si afterprint no dispara
+});
+
+// ── Eventos: Conducta ──
+$("btnNuevaConducta").addEventListener('click', ()=>{
+  $("formConducta").reset();
+  $("c_fecha").value = new Date().toISOString().slice(0,10);
+  $("modalConducta").classList.remove('hidden');
+});
+document.querySelectorAll('[data-close-cond]').forEach(el=>el.addEventListener('click',()=>$("modalConducta").classList.add('hidden')));
+
+$("formConducta").addEventListener('submit', async e=>{
+  e.preventDefault();
+  const dni = $("c_dni").value;
+  const p = state.all.find(x=>(x.dni||x.id)===dni);
+  if(!p){ toast('Selecciona un colaborador', true); return; }
+  const data = {
+    dni, nombre: p.nombres_completos,
+    fecha: $("c_fecha").value,
+    tipo: $("c_tipo").value,
+    motivo: $("c_motivo").value.trim(),
+    detalle: $("c_detalle").value.trim(),
+    documento: $("c_documento").value.trim(),
+    _created: serverTimestamp(),
+  };
+  $("btnSaveConducta").disabled = true;
+  try {
+    const ref = await addDoc(conductaRef, data);
+    state.conducta.unshift({ id: ref.id, ...data });
+    $("modalConducta").classList.add('hidden');
+    renderConducta();
+    toast('Incidencia registrada ✓');
+  } catch(err){ toast('Error: '+err.message, true); }
+  finally { $("btnSaveConducta").disabled = false; }
+});
+
+$("condFiltroEmp").addEventListener('change', e=>{ state.condEmpFilter=e.target.value; renderConducta(); });
+$("condFiltroTipo").addEventListener('change', e=>{ state.condTipoFilter=e.target.value; renderConducta(); });
+
+// ════════════════════════════════════════════════════════════════
+//  LOGIN GATE (SHA-256)
+// ════════════════════════════════════════════════════════════════
+// Hash SHA-256 de la contraseña de acceso (la contraseña en texto plano
+// NO está en el código; solo su huella criptográfica).
+const AUTH_HASH = "6a59071c7cf7c185c37485f0a8062bf2f605aa7e2be0f1f1e7daa915b0516d2c";
+const AUTH_KEY  = "msg_rrhh_auth";
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function tryLogin() {
+  const input = $("loginPwd").value;
+  const hash = await sha256(input);
+  if (hash === AUTH_HASH) {
+    localStorage.setItem(AUTH_KEY, hash);
+    $("loginGate").classList.add('hidden');
+    fetchAll();
+  } else {
+    $("loginError").classList.remove('hidden');
+    $("loginPwd").value = '';
+    $("loginPwd").focus();
+  }
+}
+
+$("loginBtn").addEventListener('click', tryLogin);
+$("loginPwd").addEventListener('keydown', e=>{ if(e.key==='Enter') tryLogin(); });
+$("loginPwd").addEventListener('input', ()=>$("loginError").classList.add('hidden'));
+
 // ── Boot ──
-fetchAll();
+if (localStorage.getItem(AUTH_KEY) === AUTH_HASH) {
+  $("loginGate").classList.add('hidden');
+  fetchAll();
+} else {
+  setTimeout(()=>$("loginPwd").focus(), 100);
+}
