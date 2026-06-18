@@ -254,6 +254,12 @@ textarea.inp{min-height:60px}
         CTS
       </span>
     </div>
+    <div class="navtab" data-view="basedatos">
+      <span class="inline-flex items-center gap-1.5">
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="5" rx="6" ry="2.4"/><path d="M4 5v5c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4V5M4 10v5c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4v-5"/></svg>
+        Base de Datos
+      </span>
+    </div>
   </div>
 </header>
 
@@ -397,40 +403,115 @@ textarea.inp{min-height:60px}
 </div>
 
 
-<!-- ============ VIEW: BOLETAS ============ -->
+<!-- ============ VIEW: BOLETAS (formato SUNAT AFP/ONP) ============ -->
 <div id="view-boletas" class="view hidden px-6 py-5">
-  <div class="grid grid-cols-1 lg:grid-cols-[400px_1fr] gap-4">
-    <div class="bg-white rounded-xl border border-slate-200 p-5 self-start">
-      <h3 class="text-sm font-semibold text-slate-700 mb-4">Generar boleta de pago</h3>
-      <label class="lbl">Colaborador</label>
-      <select id="bolEmp" class="inp bg-white mb-3"></select>
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <div><label class="lbl">Mes</label>
-          <select id="bolMes" class="inp bg-white">
-            <option value="01">Enero</option><option value="02">Febrero</option><option value="03">Marzo</option>
-            <option value="04">Abril</option><option value="05">Mayo</option><option value="06">Junio</option>
-            <option value="07">Julio</option><option value="08">Agosto</option><option value="09">Septiembre</option>
-            <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
-          </select></div>
-        <div><label class="lbl">Año</label><input id="bolAnio" type="number" value="2026" class="inp" /></div>
+  <div class="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-4">
+    <!-- Panel de control -->
+    <div class="self-start space-y-4">
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <h3 class="text-sm font-semibold text-slate-700 mb-4">Generar boleta de pago</h3>
+        <label class="lbl">Colaborador</label>
+        <select id="bolEmp" class="inp bg-white mb-3"></select>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div><label class="lbl">Mes</label>
+            <select id="bolMes" class="inp bg-white">
+              <option value="01">Enero</option><option value="02">Febrero</option><option value="03">Marzo</option>
+              <option value="04">Abril</option><option value="05">Mayo</option><option value="06">Junio</option>
+              <option value="07">Julio</option><option value="08">Agosto</option><option value="09">Septiembre</option>
+              <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+            </select></div>
+          <div><label class="lbl">Año</label><input id="bolAnio" type="number" value="2026" class="inp" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div><label class="lbl">Días laborados</label><input id="bolDias" type="number" value="30" min="0" max="31" class="inp" /></div>
+          <div><label class="lbl">Horas trabajadas</label><input id="bolHrs" type="number" value="216" min="0" class="inp" /></div>
+        </div>
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2 mt-4">Ingresos adicionales</p>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div><label class="lbl">Trabajo día feriado</label><input id="bolFeriado" type="number" value="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Bonif. producción</label><input id="bolBonProd" type="number" value="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Bono cumpl. ruta</label><input id="bolBonRuta" type="number" value="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Bono combustible</label><input id="bolBonComb" type="number" value="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Bono rooster</label><input id="bolBonRooster" type="number" value="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">CDT</label><input id="bolCDT" type="number" value="0" step="0.01" class="inp" /></div>
+        </div>
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2 mt-4">Descuentos adicionales</p>
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div><label class="lbl">Retención 5ta</label><input id="bolRet5ta" type="number" value="0" step="0.01" class="inp" /></div>
+          <div><label class="lbl">Adelantos / otros</label><input id="bolAdelanto" type="number" value="0" step="0.01" class="inp" /></div>
+        </div>
+        <button id="bolGenerar" class="w-full rounded-lg bg-navy-900 text-white text-sm font-medium py-2.5 hover:bg-navy-800 transition">Generar boleta</button>
+        <div id="bolAcciones" class="hidden mt-2 space-y-2">
+          <div class="grid grid-cols-2 gap-2">
+            <button id="bolImprimir" class="rounded-lg border border-navy-200 text-navy-700 text-sm font-medium py-2.5 hover:bg-navy-50 transition">🖨 Imprimir</button>
+            <button id="bolPDF" class="rounded-lg border border-navy-200 text-navy-700 text-sm font-medium py-2.5 hover:bg-navy-50 transition">📄 Guardar PDF</button>
+          </div>
+          <button id="bolGuardar" class="w-full rounded-lg bg-emerald-600 text-white text-sm font-medium py-2.5 hover:bg-emerald-700 transition">💾 Guardar boleta del mes</button>
+        </div>
       </div>
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <div><label class="lbl">Días laborados</label><input id="bolDias" type="number" value="30" min="0" max="31" class="inp" /></div>
-        <div><label class="lbl">Horas extras (S/)</label><input id="bolHE" type="number" value="0" min="0" step="0.01" class="inp" /></div>
+
+      <!-- Boletas guardadas del mes -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-slate-700">Boletas guardadas</h3>
+          <select id="bolHistMes" class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[12px] focus:outline-none focus:border-navy-400"></select>
+        </div>
+        <div id="bolHistList" class="space-y-1.5 max-h-[300px] overflow-y-auto"></div>
       </div>
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <div><label class="lbl">Otros ingresos (S/)</label><input id="bolOtros" type="number" value="0" min="0" step="0.01" class="inp" /></div>
-        <div><label class="lbl">Descuentos / adelantos (S/)</label><input id="bolDesc" type="number" value="0" min="0" step="0.01" class="inp" /></div>
-      </div>
-      <div class="rounded-lg bg-slate-50 px-3 py-2 mb-4">
-        <p class="text-[11px] text-slate-400 leading-relaxed">El aporte pensionario se calcula según el régimen del colaborador: ONP 13% · AFP ≈ 11.74% (aporte + prima + comisión promedio). Tasas referenciales, edítalas en el código si tu AFP difiere.</p>
-      </div>
-      <button id="bolGenerar" class="w-full rounded-lg bg-navy-900 text-white text-sm font-medium py-2.5 hover:bg-navy-800 transition">Generar boleta</button>
-      <button id="bolImprimir" class="w-full mt-2 rounded-lg border border-navy-200 text-navy-700 text-sm font-medium py-2.5 hover:bg-navy-50 transition hidden">🖨 Imprimir / Guardar PDF</button>
     </div>
-    <div id="bolPreview" class="bg-white rounded-xl border border-slate-200 p-8 min-h-[400px] grid place-items-center">
+
+    <!-- Vista previa de boleta -->
+    <div id="bolPreview" class="bg-white rounded-xl border border-slate-200 p-6 min-h-[400px] grid place-items-center">
       <p class="text-sm text-slate-400">Selecciona un colaborador y genera la boleta</p>
     </div>
+  </div>
+</div>
+
+<!-- ============ VIEW: BASE DE DATOS ============ -->
+<div id="view-basedatos" class="view hidden px-6 py-5">
+  <!-- Gate de seguridad -->
+  <div id="dbLoginGate" class="max-w-sm mx-auto mt-10">
+    <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center">
+      <div class="h-12 w-12 rounded-2xl bg-navy-900 text-white grid place-items-center mx-auto mb-3">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+      </div>
+      <h2 class="text-base font-semibold text-slate-900">Base de Datos Maestra</h2>
+      <p class="text-[12px] text-slate-400 mt-0.5 mb-4">Acceso restringido — requiere contraseña</p>
+      <input id="dbPwd" type="password" placeholder="Contraseña maestra" autocomplete="off"
+        class="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-navy-400 focus:ring-2 focus:ring-navy-100 transition" />
+      <p id="dbError" class="hidden text-[12px] text-rose-600 mt-2">Contraseña incorrecta</p>
+      <button id="dbUnlock" class="w-full mt-4 rounded-lg bg-navy-900 text-white text-sm font-medium py-2.5 hover:bg-navy-800 transition">Desbloquear</button>
+    </div>
+  </div>
+
+  <!-- Contenido (oculto hasta desbloquear) -->
+  <div id="dbContent" class="hidden">
+    <div class="flex flex-wrap items-center gap-2 mb-4">
+      <h3 class="text-sm font-semibold text-slate-700">Registros Maestros</h3>
+      <span id="dbCount" class="text-[12px] text-slate-400"></span>
+      <div class="ml-auto flex items-center gap-2">
+        <button id="dbExport" class="rounded-lg border border-slate-200 text-slate-600 text-[13px] font-medium px-3 py-1.5 hover:bg-slate-50 transition">⬇ Exportar JSON</button>
+        <button id="dbReload" class="rounded-lg border border-slate-200 text-slate-600 text-[13px] font-medium px-3 py-1.5 hover:bg-slate-50 transition">↻ Recargar de Firestore</button>
+      </div>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left border-b border-slate-100 bg-slate-50/70">
+              <th class="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Código</th>
+              <th class="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">DNI</th>
+              <th class="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Nombres</th>
+              <th class="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Banco</th>
+              <th class="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Cuenta CTS</th>
+              <th class="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Sueldo Básico</th>
+            </tr>
+          </thead>
+          <tbody id="dbTbody" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-2">Los cambios se guardan automáticamente en este dispositivo (localStorage). Usa "Recargar de Firestore" para traer los datos originales del servidor.</p>
   </div>
 </div>
 
@@ -691,6 +772,15 @@ const $=id=>document.getElementById(id);
 const num=v=>{const n=parseFloat(v);return isNaN(n)?0:n;};
 const money=v=>'S/ '+(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Normaliza cualquier fecha (Date, ISO, o GMT string) a dd/mm/yyyy
+function fechaCorta(v){
+  if(!v) return '';
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim())) return String(v).trim();
+  const d = new Date(v);
+  if(isNaN(d)) return String(v);
+  const p = n => String(n).padStart(2,'0');
+  return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`;
+}
 function calc(w){const rc=num(w.basico)+num(w.asig)+num(w.grat)+num(w.varbl);
   const m=rc/12*num(w.meses),d=rc/360*num(w.dias);return {rc,m,d,total:Math.round((m+d)*100)/100};}
 function toast(m){const t=$('ctsToast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
@@ -753,7 +843,7 @@ function pick(i){ state.sel=+i; fillForm(); if(state.scope==='one') renderSheets
 /* ---- Form ---- */
 function fillEmp(){const e=state.empresa,p=state.periodo;
   $('e_rep').value=e.rep||'';$('e_cargo').value=e.cargo||'';$('e_ruc').value=e.ruc||'';$('e_dom').value=e.dom||'';
-  $('p_texto').value=p.texto||'';$('p_ini').value=p.ini||'';$('p_fin').value=p.fin||'';$('p_lugar').value=p.lugar||'';}
+  $('p_texto').value=p.texto||'';$('p_ini').value=fechaCorta(p.ini)||'';$('p_fin').value=fechaCorta(p.fin)||'';$('p_lugar').value=p.lugar||'';}
 function onEmp(){const e=state.empresa,p=state.periodo;
   e.rep=$('e_rep').value;e.cargo=$('e_cargo').value;e.ruc=$('e_ruc').value;e.dom=$('e_dom').value;
   p.texto=$('p_texto').value;p.ini=$('p_ini').value;p.fin=$('p_fin').value;p.lugar=$('p_lugar').value;
@@ -802,7 +892,7 @@ function docHTML(w,e,p){e=e||state.empresa;p=p||state.periodo;const c=calc(w);
      <span class="lbl">APELLIDOS Y NOMBRES:</span><span class="code">${esc(w.code)}</span><span>${esc(w.name)}</span>
      <span class="lbl">DNI:</span><span></span><span>${esc(w.dni)}</span>
    </div>
-   <div class="d-period"><span class="lbl">PERIODO COMPUTABLE:</span><span>${esc(p.ini)}</span><span class="lbl">AL</span><span>${esc(p.fin)}</span><span></span></div>
+   <div class="d-period"><span class="lbl">PERIODO COMPUTABLE:</span><span>${esc(fechaCorta(p.ini))}</span><span class="lbl">AL</span><span>${esc(fechaCorta(p.fin))}</span><span></span></div>
    <div class="sect-h">CONCEPTOS REMUNERATIVOS COMPUTABLES</div>
    <div class="crow"><span>Sueldo Básico</span><span>:</span><span class="amt">${money(num(w.basico))}</span></div>
    <div class="crow"><span>Asignación Familiar</span><span>:</span><span class="amt">${money(num(w.asig))}</span></div>
