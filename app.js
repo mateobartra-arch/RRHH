@@ -22,6 +22,17 @@ const app    = initializeApp(firebaseConfig);
 const db     = getFirestore(app);
 const colRef = collection(db, COLLECTION);
 const conductaRef = collection(db, "conducta_misagi");
+const boletasRef  = collection(db, "boletas_misagi");
+
+// Tasas AFP/ONP Perú (referenciales 2026) — edítalas si cambian
+const AFP_RATES = {
+  PRIMA:     { aporte:0.10, seguro:0.0174, comision:0.0160 },
+  INTEGRA:   { aporte:0.10, seguro:0.0174, comision:0.0155 },
+  PROFUTURO: { aporte:0.10, seguro:0.0174, comision:0.0169 },
+  HABITAT:   { aporte:0.10, seguro:0.0174, comision:0.0147 },
+};
+const ONP_RATE = 0.13;
+const ESSALUD_RATE = 0.09;
 
 // ── Datos iniciales (auto-carga si la coleccion esta vacia) ──
 const SEED_DATA = [
@@ -590,7 +601,7 @@ const state = {
   all: [], alerts: [],
   search:"", categoria:"", empresa:"",
   alertSev:"", alertTipo:"",
-  conducta:[], condEmpFilter:"", condTipoFilter:"", boleta:null,
+  conducta:[], condEmpFilter:"", condTipoFilter:"", boleta:null, boletas:[], boletaActual:null,
   loading:true, error:null, selected:null, view:"dashboard"
 };
 let charts = {};
@@ -690,7 +701,13 @@ async function fetchAll() {
       state.all.sort((a,b)=>String(a.nombres_completos||'').localeCompare(String(b.nombres_completos||'')));
     }
     state.error=null;
+    // aplicar ediciones locales de Base de Datos (localStorage) si existen
+    if (window.__dbOverride && Array.isArray(window.__dbOverride)) {
+      const byId = {}; window.__dbOverride.forEach(x=>{ if(x.id) byId[x.id]=x; });
+      state.all = state.all.map(p => byId[p.id] ? { ...p, ...byId[p.id] } : p);
+    }
     await fetchConducta();
+    await fetchBoletas();
   } catch(e) {
     state.error = e.code==='permission-denied' ? 'Sin permisos. Revisa reglas Firestore.' : 'Error: '+e.message;
   } finally {
@@ -1104,17 +1121,11 @@ function renderDetail(p) {
 
 
 // ════════════════════════════════════════════════════════════════
-//  MÓDULO: BOLETAS DE PAGO
+//  MÓDULO: BOLETAS DE PAGO (formato SUNAT · AFP / ONP)
 // ════════════════════════════════════════════════════════════════
-const MESES = {  '01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
+const MESES = { '01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
   '07':'JULIO','08':'AGOSTO','09':'SEPTIEMBRE','10':'OCTUBRE','11':'NOVIEMBRE','12':'DICIEMBRE' };
-
-function tasaPension(regimen) {
-  const r = (regimen||'').toUpperCase();
-  if (r === 'ONP') return { nombre:'ONP 13%', tasa:0.13 };
-  if (['PRIMA','HABITAT','INTEGRA','PROFUTURO'].includes(r)) return { nombre:'AFP '+r+' 11.74%', tasa:0.1174 };
-  return { nombre:'Sin régimen', tasa:0 };
-}
+const DIAS_MES = { '01':31,'02':28,'03':31,'04':30,'05':31,'06':30,'07':31,'08':31,'09':30,'10':31,'11':30,'12':31 };
 
 function fillBoletasSelect() {
   const sel = $("bolEmp");
@@ -1122,72 +1133,257 @@ function fillBoletasSelect() {
     .sort((a,b)=>String(a.nombres_completos).localeCompare(b.nombres_completos));
   sel.innerHTML = '<option value="">— Seleccionar —</option>' +
     activos.map(p=>`<option value="${p.id}">${esc(p.nombres_completos)} · ${esc(p.cargo||'')}</option>`).join('');
+  fillBoletaHistMeses();
+  renderBoletaHist();
+}
+
+// Detecta régimen: AFP (PRIMA/INTEGRA/...) u ONP
+function detectRegimen(p) {
+  const r = (p.regimen_pensionario||'').toUpperCase().trim();
+  if (r === 'ONP') return { tipo:'ONP', nombre:'ONP' };
+  if (AFP_RATES[r]) return { tipo:'AFP', nombre:r };
+  // fallback: si tiene CUSPP es AFP, si no ONP
+  if (p.cuspp && p.cuspp !== '-') return { tipo:'AFP', nombre: r || 'INTEGRA' };
+  return { tipo:'ONP', nombre:'ONP' };
+}
+
+// Calcula todos los montos de la boleta
+function calcBoleta(p, inputs) {
+  const basico = p.sueldo_base || 0;
+  const dias = inputs.dias;
+  const propBasico = basico * (dias/30);
+  const asig = p.asignacion_familiar || 0;
+  const ingExtra = inputs.feriado + inputs.bonProd + inputs.bonRuta + inputs.bonComb + inputs.bonRooster + inputs.cdt;
+  const totalRem = propBasico + asig + ingExtra;
+
+  const reg = detectRegimen(p);
+  let descPension = 0, descDetalle = [];
+  if (reg.tipo === 'ONP') {
+    descPension = totalRem * ONP_RATE;
+    descDetalle.push(['ONP (13%)', descPension]);
+  } else {
+    const rt = AFP_RATES[reg.nombre] || AFP_RATES.INTEGRA;
+    const fondo = totalRem * rt.aporte;
+    const seguro = totalRem * rt.seguro;
+    const comision = totalRem * rt.comision;
+    descPension = fondo + seguro + comision;
+    descDetalle.push(['AFP Fondo (10%)', fondo]);
+    descDetalle.push([`AFP Seguro (${(rt.seguro*100).toFixed(2)}%)`, seguro]);
+    descDetalle.push([`AFP Comisión (${(rt.comision*100).toFixed(2)}%)`, comision]);
+  }
+  if (inputs.ret5ta > 0) descDetalle.push(['Retención 5ta', inputs.ret5ta]);
+  if (inputs.adelanto > 0) descDetalle.push(['Adelantos / otros', inputs.adelanto]);
+  const totalDesc = descPension + inputs.ret5ta + inputs.adelanto;
+  const essalud = totalRem * ESSALUD_RATE;
+  const neto = totalRem - totalDesc;
+
+  return { basico, propBasico, asig, ingExtra, totalRem, reg, descDetalle, totalDesc, essalud, neto, dias,
+    ingresos: [
+      ['Remuneración Base'+(dias<30?` (${dias}/30 días)`:''), propBasico],
+      ...(asig?[['Asignación Familiar', asig]]:[]),
+      ...(inputs.feriado?[['Trabajo en Día Feriado', inputs.feriado]]:[]),
+      ...(inputs.bonProd?[['Bonif. Producción', inputs.bonProd]]:[]),
+      ...(inputs.bonRuta?[['Bono Cumpl. de Ruta', inputs.bonRuta]]:[]),
+      ...(inputs.bonComb?[['Bono Combustible', inputs.bonComb]]:[]),
+      ...(inputs.bonRooster?[['Bono Rooster', inputs.bonRooster]]:[]),
+      ...(inputs.cdt?[['CDT', inputs.cdt]]:[]),
+    ]
+  };
+}
+
+function getBoletaInputs() {
+  const g = id => parseFloat($(id).value)||0;
+  return {
+    dias: g("bolDias")||30, hrs: g("bolHrs"),
+    feriado:g("bolFeriado"), bonProd:g("bolBonProd"), bonRuta:g("bolBonRuta"),
+    bonComb:g("bolBonComb"), bonRooster:g("bolBonRooster"), cdt:g("bolCDT"),
+    ret5ta:g("bolRet5ta"), adelanto:g("bolAdelanto"),
+  };
+}
+
+const M2 = v => 'S/ ' + (v||0).toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+function boletaHTML(p, inputs, mes, anio, pagada) {
+  const c = calcBoleta(p, inputs);
+  const empresa = p.empresa || 'MISAGI S.A.C.';
+  const dir = empresa.includes('CARGO')
+    ? 'P.T. Sogay, Mz. X, Lt. 5 y 7 - YARABAMBA - AREQUIPA'
+    : 'CAL. ALEMANIA MZA. L LOTE 1D OTR. APTASA - CERRO COLORADO - AREQUIPA';
+  const fini = `01/${mes}/${anio}`, ffin = `${DIAS_MES[mes]}/${mes}/${anio}`;
+  const r = (l,v) => `<tr><td style="padding:2px 8px">${esc(l)}</td><td style="padding:2px 8px;text-align:right;font-variant-numeric:tabular-nums">${M2(v)}</td></tr>`;
+
+  return `<div id="boletaDoc" class="boleta-doc" style="font-family:Inter,sans-serif;color:#15201f;max-width:780px;margin:0 auto;font-size:11px">
+    <!-- Encabezado -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1d3a5f;padding-bottom:8px;margin-bottom:8px">
+      <div>
+        <p style="font-weight:700;color:#1d3a5f;font-size:14px;margin:0">${esc(empresa)}</p>
+        <p style="margin:1px 0;color:#5d6b6a">RUC: 20610685847</p>
+        <p style="margin:1px 0;color:#5d6b6a;font-size:9.5px;max-width:340px">${esc(dir)}</p>
+      </div>
+      <div style="text-align:right">
+        <p style="font-weight:700;font-size:13px;margin:0">BOLETA DE PAGO</p>
+        <p style="margin:1px 0;font-size:10px">MENSUAL — ${MESES[mes]} ${anio}</p>
+        <p style="margin:1px 0;font-size:9.5px;color:#5d6b6a">del ${fini} al ${ffin}</p>
+        <p style="margin:1px 0;font-size:8.5px;color:#9aa">ART. DEL D.S. N° 001-98-TR</p>
+      </div>
+    </div>
+
+    <!-- Datos del trabajador (2 columnas) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 18px;margin-bottom:8px;font-size:10px">
+      <div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">DNI</b><span>${esc(p.dni||'—')}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Nombre</b><span>${esc(p.nombres_completos)}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Código</b><span>${esc(p.dni? 'C-'+p.dni.slice(-4):'—')}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Tipo Trabajador</b><span>EMPLEADO</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Categoría</b><span>${esc(p.cargo||'—')}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Área/Dpto.</b><span>${esc(p.departamento||'—')}</span></div>
+      </div>
+      <div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Reg. Pensionario</b><span>${esc(c.reg.nombre)} ${c.reg.tipo==='AFP'?'(AFP)':''}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">CUSPP</b><span>${esc(p.cuspp||'—')}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Días Trab.</b><span>${c.dias}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Hrs Trab.</b><span>${inputs.hrs}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Fec. Ingreso</b><span>${p.fecha_ingreso?fmtDate(p.fecha_ingreso):'—'}</span></div>
+        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Básico</b><span>${M2(c.basico)}</span></div>
+      </div>
+    </div>
+
+    <!-- 3 columnas: Remuneraciones / Descuentos / Aportes -->
+    <div style="display:grid;grid-template-columns:1.1fr 1fr 0.9fr;gap:10px;margin-bottom:10px">
+      <div style="border:1px solid #d6e0df;border-radius:6px;overflow:hidden">
+        <div style="background:#1d3a5f;color:#fff;padding:4px 8px;font-weight:600;font-size:10px">REMUNERACIONES</div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px">${c.ingresos.map(([l,v])=>r(l,v)).join('')}
+          <tr style="background:#f3f6f5;font-weight:700"><td style="padding:3px 8px">TOTAL</td><td style="padding:3px 8px;text-align:right">${M2(c.totalRem)}</td></tr>
+        </table>
+      </div>
+      <div style="border:1px solid #d6e0df;border-radius:6px;overflow:hidden">
+        <div style="background:#1d3a5f;color:#fff;padding:4px 8px;font-weight:600;font-size:10px">DESCUENTOS</div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px">${c.descDetalle.map(([l,v])=>r(l,v)).join('')}
+          <tr style="background:#f3f6f5;font-weight:700"><td style="padding:3px 8px">TOTAL</td><td style="padding:3px 8px;text-align:right">${M2(c.totalDesc)}</td></tr>
+        </table>
+      </div>
+      <div style="border:1px solid #d6e0df;border-radius:6px;overflow:hidden">
+        <div style="background:#1d3a5f;color:#fff;padding:4px 8px;font-weight:600;font-size:10px">APORTES EMPLEADOR</div>
+        <table style="width:100%;border-collapse:collapse;font-size:10px">${r('EsSalud (9%)', c.essalud)}
+          <tr style="background:#f3f6f5;font-weight:700"><td style="padding:3px 8px">TOTAL</td><td style="padding:3px 8px;text-align:right">${M2(c.essalud)}</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Neto -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+      <div style="background:#059669;color:#fff;border-radius:6px;padding:8px 20px;display:flex;gap:16px;align-items:center">
+        <span style="font-weight:600;font-size:11px">NETO A PAGAR</span>
+        <span style="font-weight:700;font-size:16px">${M2(c.neto)}</span>
+      </div>
+    </div>
+    ${pagada ? '<div style="text-align:right;color:#059669;font-weight:600;font-size:11px;margin-bottom:6px">✓ PAGADA</div>' : ''}
+
+    <p style="font-size:8.5px;color:#9aa;margin:4px 0 28px">${esc(p.banco||'')} ${esc(p.cuenta? '· Cta. '+p.cuenta:'')} — Documento referencial generado por Sistema RRHH MISAGI.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:24px">
+      <div style="border-top:1px solid #999;padding-top:3px;text-align:center;font-size:10px;color:#5d6b6a">EMPLEADOR</div>
+      <div style="border-top:1px solid #999;padding-top:3px;text-align:center;font-size:10px;color:#5d6b6a">${esc(p.nombres_completos)}<br>DNI ${esc(p.dni||'')}</div>
+    </div>
+  </div>`;
 }
 
 function generarBoleta() {
   const p = state.all.find(x=>x.id===$("bolEmp").value);
   if(!p){ toast('Selecciona un colaborador', true); return; }
+  const inputs = getBoletaInputs();
   const mes = $("bolMes").value, anio = $("bolAnio").value;
-  const dias = parseFloat($("bolDias").value)||30;
-  const he = parseFloat($("bolHE").value)||0;
-  const otros = parseFloat($("bolOtros").value)||0;
-  const descAdic = parseFloat($("bolDesc").value)||0;
+  // ¿ya existe guardada y pagada?
+  const existing = state.boletas.find(b=>b.empId===p.id && b.mes===mes && b.anio===anio);
+  state.boletaActual = { p, inputs, mes, anio };
+  $("bolPreview").innerHTML = boletaHTML(p, inputs, mes, anio, existing?.pagada);
+  $("bolAcciones").classList.remove('hidden');
+}
 
-  const base = p.sueldo_base||0;
-  const proporcional = base * (dias/30);
-  const bono = p.bono||0;
-  const asig = p.asignacion_familiar||0;
-  const totalIngresos = proporcional + bono + asig + he + otros;
+// ── Persistencia de boletas en Firestore ──
+async function fetchBoletas() {
+  try {
+    const snap = await getDocs(boletasRef);
+    state.boletas = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } catch(e){ console.warn('boletas:', e.message); state.boletas=[]; }
+}
 
-  const pen = tasaPension(p.regimen_pensionario);
-  const dctoPension = totalIngresos * pen.tasa;
-  const totalDesc = dctoPension + descAdic;
-  const neto = totalIngresos - totalDesc;
-  const essalud = totalIngresos * 0.09;
+async function guardarBoleta() {
+  const a = state.boletaActual;
+  if(!a){ toast('Genera una boleta primero', true); return; }
+  const c = calcBoleta(a.p, a.inputs);
+  const data = {
+    empId: a.p.id, dni: a.p.dni||'', nombre: a.p.nombres_completos,
+    mes: a.mes, anio: a.anio, periodo: `${a.mes}/${a.anio}`,
+    inputs: a.inputs, neto: c.neto, totalRem: c.totalRem, totalDesc: c.totalDesc,
+    regimen: c.reg.nombre, pagada: false, _updated: serverTimestamp(),
+  };
+  // id determinista: una boleta por trabajador-mes
+  const id = `bol_${a.p.dni||a.p.id}_${a.anio}${a.mes}`;
+  try {
+    await setDoc(doc(db,'boletas_misagi',id), data);
+    const i = state.boletas.findIndex(b=>b.id===id);
+    if(i!==-1) state.boletas[i]={id,...data}; else state.boletas.push({id,...data});
+    toast('Boleta guardada ✓');
+    fillBoletaHistMeses(); renderBoletaHist();
+  } catch(e){ toast('Error al guardar: '+e.message, true); }
+}
 
-  const F = v => 'S/ ' + v.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+async function togglePagada(id) {
+  const b = state.boletas.find(x=>x.id===id);
+  if(!b) return;
+  try {
+    await updateDoc(doc(db,'boletas_misagi',id), { pagada: !b.pagada, _updated: serverTimestamp() });
+    b.pagada = !b.pagada;
+    renderBoletaHist();
+    toast(b.pagada ? 'Marcada como pagada ✓' : 'Marcada como pendiente');
+  } catch(e){ toast('Error: '+e.message, true); }
+}
 
-  $("bolPreview").innerHTML = `
-  <div class="w-full max-w-[640px] mx-auto text-[12px]" style="font-family:Inter,sans-serif">
-    <div class="flex items-start justify-between border-b-2 border-navy-900 pb-3 mb-4">
-      <div>
-        <p class="font-bold text-navy-900 text-base">${esc(p.empresa||'MISAGI S.A.C.')}</p>
-        <p class="text-slate-500 text-[11px]">RUC 20610685847 · Cerro Colorado, Arequipa</p>
+function fillBoletaHistMeses() {
+  const sel = $("bolHistMes");
+  const periodos = [...new Set(state.boletas.map(b=>`${b.anio}-${b.mes}`))].sort().reverse();
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Todos los meses</option>' +
+    periodos.map(pr=>{const [a,m]=pr.split('-');return `<option value="${pr}">${MESES[m]} ${a}</option>`;}).join('');
+  if(cur) sel.value = cur;
+}
+
+function renderBoletaHist() {
+  const list = $("bolHistList");
+  const filt = $("bolHistMes").value;
+  let rows = state.boletas.slice().sort((a,b)=>(b.anio+b.mes).localeCompare(a.anio+a.mes) || String(a.nombre).localeCompare(b.nombre));
+  if(filt){ const [a,m]=filt.split('-'); rows = rows.filter(b=>b.anio===a && b.mes===m); }
+  if(!rows.length){ list.innerHTML='<p class="text-[12px] text-slate-400 text-center py-4">Sin boletas guardadas.</p>'; return; }
+  list.innerHTML = rows.map(b=>`
+    <div class="flex items-center gap-2 rounded-lg border border-slate-100 px-2.5 py-2 hover:bg-slate-50 transition">
+      <div class="min-w-0 flex-1 cursor-pointer" data-openbol="${b.id}">
+        <p class="text-[12px] font-medium text-slate-700 truncate">${esc(b.nombre)}</p>
+        <p class="text-[10px] text-slate-400">${MESES[b.mes]} ${b.anio} · ${M2(b.neto)}</p>
       </div>
-      <div class="text-right">
-        <p class="font-bold text-slate-800">BOLETA DE PAGO</p>
-        <p class="text-slate-500 text-[11px]">${MESES[mes]} ${anio}</p>
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-x-6 gap-y-1 mb-4">
-      <p><span class="text-slate-400">Colaborador:</span> <strong>${esc(p.nombres_completos)}</strong></p>
-      <p><span class="text-slate-400">DNI:</span> ${esc(p.dni||'—')}</p>
-      <p><span class="text-slate-400">Cargo:</span> ${esc(p.cargo||'—')}</p>
-      <p><span class="text-slate-400">Fecha ingreso:</span> ${fmtDate(p.fecha_ingreso)}</p>
-      <p><span class="text-slate-400">Régimen:</span> ${esc(pen.nombre)}</p>
-      <p><span class="text-slate-400">Días laborados:</span> ${dias}</p>
-    </div>
-    <table class="w-full mb-1">
-      <tr class="bg-navy-900 text-white"><td class="px-3 py-1.5 font-semibold" colspan="2">INGRESOS</td></tr>
-      <tr class="border-b border-slate-100"><td class="px-3 py-1.5">Sueldo básico ${dias<30?`(proporcional ${dias}/30)`:''}</td><td class="px-3 py-1.5 text-right font-mono">${F(proporcional)}</td></tr>
-      ${bono?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Bonificación</td><td class="px-3 py-1.5 text-right font-mono">${F(bono)}</td></tr>`:''}
-      ${asig?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Asignación familiar</td><td class="px-3 py-1.5 text-right font-mono">${F(asig)}</td></tr>`:''}
-      ${he?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Horas extras</td><td class="px-3 py-1.5 text-right font-mono">${F(he)}</td></tr>`:''}
-      ${otros?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Otros ingresos</td><td class="px-3 py-1.5 text-right font-mono">${F(otros)}</td></tr>`:''}
-      <tr class="bg-slate-50 font-semibold"><td class="px-3 py-1.5">TOTAL INGRESOS</td><td class="px-3 py-1.5 text-right font-mono">${F(totalIngresos)}</td></tr>
-      <tr class="bg-navy-900 text-white"><td class="px-3 py-1.5 font-semibold" colspan="2">DESCUENTOS</td></tr>
-      <tr class="border-b border-slate-100"><td class="px-3 py-1.5">${esc(pen.nombre)}</td><td class="px-3 py-1.5 text-right font-mono">${F(dctoPension)}</td></tr>
-      ${descAdic?`<tr class="border-b border-slate-100"><td class="px-3 py-1.5">Descuentos / adelantos</td><td class="px-3 py-1.5 text-right font-mono">${F(descAdic)}</td></tr>`:''}
-      <tr class="bg-slate-50 font-semibold"><td class="px-3 py-1.5">TOTAL DESCUENTOS</td><td class="px-3 py-1.5 text-right font-mono">${F(totalDesc)}</td></tr>
-      <tr class="bg-emerald-600 text-white text-sm font-bold"><td class="px-3 py-2">NETO A PAGAR</td><td class="px-3 py-2 text-right font-mono">${F(neto)}</td></tr>
-    </table>
-    <p class="text-[10px] text-slate-400 mb-5">Aporte empleador EsSalud (9%): ${F(essalud)} — no se descuenta al trabajador. Documento referencial generado por el Sistema RRHH MISAGI.</p>
-    <div class="grid grid-cols-2 gap-10 mt-10 pt-6">
-      <div class="border-t border-slate-300 pt-1 text-center text-[11px] text-slate-500">EMPLEADOR</div>
-      <div class="border-t border-slate-300 pt-1 text-center text-[11px] text-slate-500">TRABAJADOR<br>${esc(p.nombres_completos)} · DNI ${esc(p.dni||'')}</div>
-    </div>
-  </div>`;
-  $("bolImprimir").classList.remove('hidden');
+      <button data-pagada="${b.id}" class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${b.pagada?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700 hover:bg-amber-200'}">
+        ${b.pagada?'✓ Pagada':'⏳ Pendiente'}
+      </button>
+    </div>`).join('');
+  list.querySelectorAll('[data-pagada]').forEach(el=>el.addEventListener('click',()=>togglePagada(el.dataset.pagada)));
+  list.querySelectorAll('[data-openbol]').forEach(el=>el.addEventListener('click',()=>abrirBoletaGuardada(el.dataset.openbol)));
+}
+
+function abrirBoletaGuardada(id) {
+  const b = state.boletas.find(x=>x.id===id);
+  if(!b) return;
+  const p = state.all.find(x=>x.id===b.empId) || state.all.find(x=>x.dni===b.dni);
+  if(!p){ toast('Colaborador no encontrado', true); return; }
+  // restaurar inputs en el formulario
+  $("bolEmp").value = p.id; $("bolMes").value = b.mes; $("bolAnio").value = b.anio;
+  const inp = b.inputs||{};
+  $("bolDias").value=inp.dias||30; $("bolHrs").value=inp.hrs||216;
+  $("bolFeriado").value=inp.feriado||0; $("bolBonProd").value=inp.bonProd||0;
+  $("bolBonRuta").value=inp.bonRuta||0; $("bolBonComb").value=inp.bonComb||0;
+  $("bolBonRooster").value=inp.bonRooster||0; $("bolCDT").value=inp.cdt||0;
+  $("bolRet5ta").value=inp.ret5ta||0; $("bolAdelanto").value=inp.adelanto||0;
+  state.boletaActual = { p, inputs:inp, mes:b.mes, anio:b.anio };
+  $("bolPreview").innerHTML = boletaHTML(p, inp, b.mes, b.anio, b.pagada);
+  $("bolAcciones").classList.remove('hidden');
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1270,6 +1466,8 @@ function switchView(v) {
   if(v==='boletas') fillBoletasSelect();
   if(v==='conducta'){ fillConductaSelects(); renderConducta(); }
   // CTS está integrado nativo en el DOM; no requiere inicialización
+  // Base de Datos: re-bloquear al salir y al entrar
+  if(v!=='basedatos'){ $("dbContent")?.classList.add('hidden'); $("dbLoginGate")?.classList.remove('hidden'); }
 }
 
 function renderAll() {
@@ -1407,6 +1605,103 @@ $("formConducta").addEventListener('submit', async e=>{
 $("condFiltroEmp").addEventListener('change', e=>{ state.condEmpFilter=e.target.value; renderConducta(); });
 $("condFiltroTipo").addEventListener('change', e=>{ state.condTipoFilter=e.target.value; renderConducta(); });
 
+// ── Eventos: Boletas (acciones nuevas) ──
+$("bolGuardar")?.addEventListener('click', guardarBoleta);
+$("bolHistMes")?.addEventListener('change', renderBoletaHist);
+$("bolPDF")?.addEventListener('click', ()=>{
+  const el = document.getElementById('boletaDoc');
+  if(!el || typeof html2pdf==='undefined'){ toast('Genera la boleta primero', true); return; }
+  const a = state.boletaActual;
+  const nombre = a ? `Boleta_${a.p.nombres_completos.replace(/[^\w]+/g,'_')}_${MESES[a.mes]}_${a.anio}.pdf` : 'boleta.pdf';
+  html2pdf().set({margin:8, filename:nombre, image:{type:'jpeg',quality:0.98},
+    html2canvas:{scale:2}, jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}}).from(el).save();
+});
+
+// ════════════════════════════════════════════════════════════════
+//  MÓDULO: BASE DE DATOS MAESTRA (acceso restringido)
+// ════════════════════════════════════════════════════════════════
+// Hash SHA-256 de "operaciones2026" (contraseña no almacenada en texto plano)
+const DB_HASH = "dff13cf08c213d9b5434334963ad6bc93e4f5a1ff986c688d4654e43fbddddbf";
+const DB_LS_KEY = "misagi_db";
+
+async function dbUnlock() {
+  const val = $("dbPwd").value;
+  const h = await sha256(val);
+  if (h === DB_HASH) {
+    $("dbLoginGate").classList.add('hidden');
+    $("dbContent").classList.remove('hidden');
+    $("dbPwd").value = '';
+    renderDatabaseTable();
+  } else {
+    $("dbError").classList.remove('hidden');
+    $("dbPwd").value = ''; $("dbPwd").focus();
+  }
+}
+
+// Mapea documentos Firestore al esquema de la tabla maestra
+function dbRows() {
+  return state.all.map(p=>({
+    id: p.id,
+    codigo: p.dni ? 'C-'+String(p.dni).slice(-4) : '',
+    dni: p.dni||'',
+    nombres: p.nombres_completos||'',
+    banco: p.banco||'',
+    cuenta_cts: p.cuenta_cts || p.cuenta || '',
+    basico: p.sueldo_base||0,
+  }));
+}
+
+function renderDatabaseTable() {
+  const tbody = $("dbTbody");
+  const rows = dbRows();
+  $("dbCount").textContent = `${rows.length} registros`;
+  const cell = (id,field,val,type='text') =>
+    `<td class="px-3 py-1.5"><input data-id="${id}" data-field="${field}" type="${type}" value="${esc(val)}"
+      class="w-full bg-transparent border border-transparent hover:border-slate-200 focus:border-navy-400 rounded px-1.5 py-1 text-[13px] focus:outline-none focus:ring-1 focus:ring-navy-100 transition" /></td>`;
+  tbody.innerHTML = rows.map(r=>`<tr class="hover:bg-slate-50/60">
+    ${cell(r.id,'codigo',r.codigo)}
+    ${cell(r.id,'dni',r.dni)}
+    ${cell(r.id,'nombres',r.nombres)}
+    ${cell(r.id,'banco',r.banco)}
+    ${cell(r.id,'cuenta_cts',r.cuenta_cts)}
+    ${cell(r.id,'basico',r.basico,'number')}
+  </tr>`).join('');
+  tbody.querySelectorAll('input').forEach(inp=>inp.addEventListener('change',onDbEdit));
+}
+
+function onDbEdit(e) {
+  const { id, field } = e.target.dataset;
+  let val = e.target.value;
+  const p = state.all.find(x=>x.id===id);
+  if(!p) return;
+  // mapear campo de tabla → propiedad real del documento
+  if(field==='basico'){ p.sueldo_base = parseFloat(val)||0; }
+  else if(field==='nombres'){ p.nombres_completos = val; }
+  else if(field==='cuenta_cts'){ p.cuenta_cts = val; }
+  else if(field==='codigo'){ /* solo display */ }
+  else { p[field] = val; }
+  // persistir snapshot local
+  try { localStorage.setItem(DB_LS_KEY, JSON.stringify(state.all)); } catch(_){}
+  // refrescar otros módulos que dependen del dato
+  if(['basico','nombres'].includes(field)){ renderTable(); updateStats(); }
+  toast('Guardado localmente');
+}
+
+$("dbUnlock")?.addEventListener('click', dbUnlock);
+$("dbPwd")?.addEventListener('keydown', e=>{ if(e.key==='Enter') dbUnlock(); });
+$("dbPwd")?.addEventListener('input', ()=>$("dbError").classList.add('hidden'));
+$("dbExport")?.addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(dbRows(),null,2)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'base_datos_misagi.json'; a.click();
+});
+$("dbReload")?.addEventListener('click', async ()=>{
+  try { localStorage.removeItem(DB_LS_KEY); } catch(_){}
+  toast('Recargando de Firestore…');
+  await fetchAll();
+  renderDatabaseTable();
+});
+
 // ════════════════════════════════════════════════════════════════
 //  LOGIN GATE (SHA-256)
 // ════════════════════════════════════════════════════════════════
@@ -1437,6 +1732,20 @@ async function tryLogin() {
 $("loginBtn").addEventListener('click', tryLogin);
 $("loginPwd").addEventListener('keydown', e=>{ if(e.key==='Enter') tryLogin(); });
 $("loginPwd").addEventListener('input', ()=>$("loginError").classList.add('hidden'));
+
+// ── Init: aplicar override local de Base de Datos si existe ──
+window.addEventListener('DOMContentLoaded', ()=>{
+  try {
+    const raw = localStorage.getItem(DB_LS_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data) && data.length) {
+        // se aplicará tras el fetch; guardamos para merge
+        window.__dbOverride = data;
+      }
+    }
+  } catch(_){}
+});
 
 // ── Boot ──
 if (localStorage.getItem(AUTH_KEY) === AUTH_HASH) {
