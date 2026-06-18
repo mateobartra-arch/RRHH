@@ -24,15 +24,17 @@ const colRef = collection(db, COLLECTION);
 const conductaRef = collection(db, "conducta_misagi");
 const boletasRef  = collection(db, "boletas_misagi");
 
-// Tasas AFP/ONP Perú (referenciales 2026) — edítalas si cambian
+// Tasas AFP/ONP Perú (calibradas con boleta real MISAGI mayo 2026)
+// Base afecta = Básico(proporcional) + Asig.Fam + Trabajo en día feriado
 const AFP_RATES = {
-  PRIMA:     { aporte:0.10, seguro:0.0174, comision:0.0160 },
-  INTEGRA:   { aporte:0.10, seguro:0.0174, comision:0.0155 },
-  PROFUTURO: { aporte:0.10, seguro:0.0174, comision:0.0169 },
-  HABITAT:   { aporte:0.10, seguro:0.0174, comision:0.0147 },
+  PRIMA:     { aporte:0.10, seguro:0.013698, comision:0.0160 },
+  INTEGRA:   { aporte:0.10, seguro:0.013698, comision:0.015501 },
+  PROFUTURO: { aporte:0.10, seguro:0.013698, comision:0.0169 },
+  HABITAT:   { aporte:0.10, seguro:0.013698, comision:0.0147 },
 };
 const ONP_RATE = 0.13;
 const ESSALUD_RATE = 0.09;
+const MISAGI_LOGO = "data:image/jpeg;base64,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";
 
 // ── Datos iniciales (auto-carga si la coleccion esta vacia) ──
 const SEED_DATA = [
@@ -1147,48 +1149,44 @@ function detectRegimen(p) {
   return { tipo:'ONP', nombre:'ONP' };
 }
 
-// Calcula todos los montos de la boleta
+// Calcula todos los montos de la boleta (modelo MISAGI real)
 function calcBoleta(p, inputs) {
   const basico = p.sueldo_base || 0;
   const dias = inputs.dias;
   const propBasico = basico * (dias/30);
   const asig = p.asignacion_familiar || 0;
-  const ingExtra = inputs.feriado + inputs.bonProd + inputs.bonRuta + inputs.bonComb + inputs.bonRooster + inputs.cdt;
-  const totalRem = propBasico + asig + ingExtra;
+  const feriado = inputs.feriado;
+  // Bonos NO afectos a AFP/EsSalud
+  const bonos = inputs.bonProd + inputs.bonRuta + inputs.bonComb + inputs.bonRooster + inputs.cdt;
+  const totalRem = propBasico + asig + feriado + bonos;
+
+  // BASE AFECTA (cotiza AFP/ONP/EsSalud): básico prop. + asig.fam + feriado
+  const baseAfecta = propBasico + asig + feriado;
 
   const reg = detectRegimen(p);
-  let descPension = 0, descDetalle = [];
+  let descPension = 0;
+  let afpFondo=0, afpSeguro=0, afpComis=0, onp=0;
   if (reg.tipo === 'ONP') {
-    descPension = totalRem * ONP_RATE;
-    descDetalle.push(['ONP (13%)', descPension]);
+    onp = baseAfecta * ONP_RATE;
+    descPension = onp;
   } else {
     const rt = AFP_RATES[reg.nombre] || AFP_RATES.INTEGRA;
-    const fondo = totalRem * rt.aporte;
-    const seguro = totalRem * rt.seguro;
-    const comision = totalRem * rt.comision;
-    descPension = fondo + seguro + comision;
-    descDetalle.push(['AFP Fondo (10%)', fondo]);
-    descDetalle.push([`AFP Seguro (${(rt.seguro*100).toFixed(2)}%)`, seguro]);
-    descDetalle.push([`AFP Comisión (${(rt.comision*100).toFixed(2)}%)`, comision]);
+    afpFondo  = baseAfecta * rt.aporte;
+    afpSeguro = baseAfecta * rt.seguro;
+    afpComis  = baseAfecta * rt.comision;
+    descPension = afpFondo + afpSeguro + afpComis;
   }
-  if (inputs.ret5ta > 0) descDetalle.push(['Retención 5ta', inputs.ret5ta]);
-  if (inputs.adelanto > 0) descDetalle.push(['Adelantos / otros', inputs.adelanto]);
-  const totalDesc = descPension + inputs.ret5ta + inputs.adelanto;
-  const essalud = totalRem * ESSALUD_RATE;
-  const neto = totalRem - totalDesc;
+  const r2 = v => Math.round(v*100)/100;
+  afpFondo=r2(afpFondo); afpSeguro=r2(afpSeguro); afpComis=r2(afpComis); onp=r2(onp);
+  descPension = r2(reg.tipo==='AFP' ? (afpFondo+afpSeguro+afpComis) : onp);
+  const totalDesc = r2(descPension + inputs.ret5ta + inputs.adelanto);
+  const essalud = r2(baseAfecta * ESSALUD_RATE);
+  const neto = r2(totalRem - totalDesc);
 
-  return { basico, propBasico, asig, ingExtra, totalRem, reg, descDetalle, totalDesc, essalud, neto, dias,
-    ingresos: [
-      ['Remuneración Base'+(dias<30?` (${dias}/30 días)`:''), propBasico],
-      ...(asig?[['Asignación Familiar', asig]]:[]),
-      ...(inputs.feriado?[['Trabajo en Día Feriado', inputs.feriado]]:[]),
-      ...(inputs.bonProd?[['Bonif. Producción', inputs.bonProd]]:[]),
-      ...(inputs.bonRuta?[['Bono Cumpl. de Ruta', inputs.bonRuta]]:[]),
-      ...(inputs.bonComb?[['Bono Combustible', inputs.bonComb]]:[]),
-      ...(inputs.bonRooster?[['Bono Rooster', inputs.bonRooster]]:[]),
-      ...(inputs.cdt?[['CDT', inputs.cdt]]:[]),
-    ]
-  };
+  return { basico, propBasico, asig, feriado, bonos, totalRem, baseAfecta, reg,
+    afpFondo, afpSeguro, afpComis, onp, descPension, totalDesc, essalud, neto, dias,
+    bonProd:inputs.bonProd, bonRuta:inputs.bonRuta, bonComb:inputs.bonComb,
+    bonRooster:inputs.bonRooster, cdt:inputs.cdt, ret5ta:inputs.ret5ta, adelanto:inputs.adelanto };
 }
 
 function getBoletaInputs() {
@@ -1207,82 +1205,110 @@ function boletaHTML(p, inputs, mes, anio, pagada) {
   const c = calcBoleta(p, inputs);
   const empresa = p.empresa || 'MISAGI S.A.C.';
   const dir = empresa.includes('CARGO')
-    ? 'P.T. Sogay, Mz. X, Lt. 5 y 7 - YARABAMBA - AREQUIPA'
-    : 'CAL. ALEMANIA MZA. L LOTE 1D OTR. APTASA - CERRO COLORADO - AREQUIPA';
+    ? 'P.T. SOGAY, MZ. X, LT. 5 Y 7 - YARABAMBA - AREQUIPA'
+    : 'CAL.ALEMANIA MZA. L LOTE. 1D OTR. APTASA AREQUIPA - AREQUIPA - CERRO COLORADO';
   const fini = `01/${mes}/${anio}`, ffin = `${DIAS_MES[mes]}/${mes}/${anio}`;
-  const r = (l,v) => `<tr><td style="padding:2px 8px">${esc(l)}</td><td style="padding:2px 8px;text-align:right;font-variant-numeric:tabular-nums">${M2(v)}</td></tr>`;
+  const M = v => (v||0).toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const cod = p.dni ? '1'+String(p.dni).slice(-3) : '—';
+  const esAFP = c.reg.tipo === 'AFP';
 
-  return `<div id="boletaDoc" class="boleta-doc" style="font-family:Inter,sans-serif;color:#15201f;max-width:780px;margin:0 auto;font-size:11px">
-    <!-- Encabezado -->
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1d3a5f;padding-bottom:8px;margin-bottom:8px">
-      <div>
-        <p style="font-weight:700;color:#1d3a5f;font-size:14px;margin:0">${esc(empresa)}</p>
-        <p style="margin:1px 0;color:#5d6b6a">RUC: 20610685847</p>
-        <p style="margin:1px 0;color:#5d6b6a;font-size:9.5px;max-width:340px">${esc(dir)}</p>
+  // filas datos derecha (vacaciones / permisos)
+  const dr = (l,v) => `<tr><td class="bl-k">${l}</td><td class="bl-v">${v}</td></tr>`;
+
+  // remuneraciones (siempre muestra las líneas estándar como el PDF)
+  const remRows = [
+    ['Remuneración Base', c.propBasico],
+    ['Asignación Familiar', c.asig],
+    ['Trabajo en Dia Feriado', c.feriado],
+    ['Bonif Producción', c.bonProd],
+    ['Bono Cumpl. De ruta', c.bonRuta],
+    ['Bono combustible', c.bonComb],
+    ['Bono rooster', c.bonRooster],
+    ['CDT', c.cdt],
+  ];
+  // descuentos
+  const descRows = esAFP
+    ? [['AFP FONDO', c.afpFondo],['AFP SEGURO', c.afpSeguro],['AFP COMIS VARIABLE', c.afpComis],['RETENCION 5TA', c.ret5ta]]
+    : [['ONP', c.onp],['RETENCION 5TA', c.ret5ta]];
+  if (c.adelanto>0) descRows.push(['Adelantos / Otros', c.adelanto]);
+  const apoRows = [['ESSALUD', c.essalud],['S.C.T.R. ', '']];
+
+  const remHTML = remRows.map(([l,v])=>`<div class="bl-line"><span>${l}</span><span class="bl-n">${M(v)}</span></div>`).join('');
+  const descHTML = descRows.map(([l,v])=>`<div class="bl-line"><span>${l}</span><span class="bl-n">${M(v)}</span></div>`).join('');
+  const apoHTML = apoRows.map(([l,v])=>`<div class="bl-line"><span>${l}</span><span class="bl-n">${v===''?'':M(v)}</span></div>`).join('');
+
+  return `<div id="boletaDoc" class="bl-doc">
+    <!-- Cabecera -->
+    <div class="bl-head">
+      <div class="bl-head-l">
+        <img src="${MISAGI_LOGO}" alt="MISAGI" class="bl-logo" />
+        <p class="bl-rs">${esc(empresa)}</p>
+        <p class="bl-sm">RUC: 20610685847</p>
+        <p class="bl-sm bl-dir">DIRECCIÓN: ${esc(dir)}</p>
       </div>
-      <div style="text-align:right">
-        <p style="font-weight:700;font-size:13px;margin:0">BOLETA DE PAGO</p>
-        <p style="margin:1px 0;font-size:10px">MENSUAL — ${MESES[mes]} ${anio}</p>
-        <p style="margin:1px 0;font-size:9.5px;color:#5d6b6a">del ${fini} al ${ffin}</p>
-        <p style="margin:1px 0;font-size:8.5px;color:#9aa">ART. DEL D.S. N° 001-98-TR</p>
+      <div class="bl-head-r">
+        <p class="bl-title">BOLETA DE PAGO</p>
+        <p class="bl-sub">MENSUAL MISAGI - ${MESES[mes]} ${anio}</p>
+        <p class="bl-sub">del ${fini} al ${ffin}</p>
+        <p class="bl-sub bl-art">ART. DEL DECRETO SUPREMO N° 001-98-TR</p>
       </div>
     </div>
 
-    <!-- Datos del trabajador (2 columnas) -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 18px;margin-bottom:8px;font-size:10px">
-      <div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">DNI</b><span>${esc(p.dni||'—')}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Nombre</b><span>${esc(p.nombres_completos)}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Código</b><span>${esc(p.dni? 'C-'+p.dni.slice(-4):'—')}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Tipo Trabajador</b><span>EMPLEADO</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Categoría</b><span>${esc(p.cargo||'—')}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Área/Dpto.</b><span>${esc(p.departamento||'—')}</span></div>
-      </div>
-      <div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Reg. Pensionario</b><span>${esc(c.reg.nombre)} ${c.reg.tipo==='AFP'?'(AFP)':''}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">CUSPP</b><span>${esc(p.cuspp||'—')}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Días Trab.</b><span>${c.dias}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Hrs Trab.</b><span>${inputs.hrs}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Fec. Ingreso</b><span>${p.fecha_ingreso?fmtDate(p.fecha_ingreso):'—'}</span></div>
-        <div style="display:flex;gap:6px"><b style="min-width:96px;color:#5d6b6a">Básico</b><span>${M2(c.basico)}</span></div>
-      </div>
+    <!-- Fila nombre + vacaciones header -->
+    <table class="bl-tbl bl-tbl-top">
+      <tr>
+        <td class="bl-name" colspan="2"><b>${esc(p.dni||'')}</b> &nbsp; <i>${esc(p.nombres_completos)}</i></td>
+        <td class="bl-k">Fec Ing</td><td class="bl-v">${p.fecha_ingreso?fmtDate(p.fecha_ingreso):''}</td>
+        <td class="bl-vac" colspan="2">Vacaciones</td>
+      </tr>
+    </table>
+
+    <!-- Bloque datos: izquierda + derecha -->
+    <table class="bl-tbl bl-data">
+      <tr><td class="bl-k">Código</td><td class="bl-vb">${cod}</td><td class="bl-k">Fec Cese</td><td class="bl-v">:</td><td class="bl-k">Inicio</td><td class="bl-k">Fin</td></tr>
+      <tr><td class="bl-k">Tipo Trabajador</td><td class="bl-vb">EMPLEADO</td><td class="bl-k">Días Vac.</td><td class="bl-v">: 0 día(s)</td><td></td><td></td></tr>
+      <tr><td class="bl-k">Categoria</td><td class="bl-vb">${esc(p.cargo||'')}</td><td class="bl-k">Hrs Trab</td><td class="bl-v">${inputs.hrs}</td><td></td><td></td></tr>
+      <tr><td class="bl-k">Área/Dpto.</td><td class="bl-vb">${esc(p.departamento||'')}</td><td class="bl-k">Hrs Trab N</td><td class="bl-v">: 0.00</td><td class="bl-k" colspan="2">Correspondientes a</td></tr>
+      <tr><td class="bl-k">Ocupación</td><td class="bl-vb">EMPLEADO</td><td colspan="4"></td></tr>
+      <tr><td class="bl-k">Tipo AFP</td><td class="bl-vb">${esc(c.reg.nombre)}</td><td class="bl-k">Hrs Extras</td><td class="bl-v">: (25%) 0.00  (35%) 0.00  (100%) 0.00</td><td></td><td></td></tr>
+      <tr><td class="bl-k">Reg. Pensionario</td><td class="bl-vb"></td><td class="bl-k">Per. C. Goce</td><td class="bl-v">: 0 día(s)</td><td></td><td></td></tr>
+      <tr><td class="bl-k">CUSPP</td><td class="bl-vb">${esc(p.cuspp||'-')}</td><td class="bl-k">Desc Med</td><td class="bl-v">: 0 día(s)</td><td class="bl-k">Faltas</td><td class="bl-v">: 0 día(s)</td></tr>
+      <tr><td class="bl-k">Banco</td><td class="bl-vb">${esc(p.banco||'')}</td><td class="bl-k">Subsidio IT</td><td class="bl-v">: 0 día(s)</td><td class="bl-k">Permisos</td><td class="bl-v">: 0 día(s)</td></tr>
+      <tr><td class="bl-k">Cta.</td><td class="bl-vb">${esc(p.cuenta_cts||p.cuenta||'')}</td><td class="bl-k">Subsidio Mat</td><td class="bl-v">: 0 día(s)</td><td class="bl-k">Suspensión</td><td class="bl-v">: 0 día(s)</td></tr>
+      <tr><td class="bl-k">Situación Especial</td><td class="bl-vb">NINGUNA</td><td class="bl-k">Licencia Pat</td><td class="bl-v">: 0 día(s)</td><td class="bl-k">Tardanza</td><td class="bl-v">: 0.00 mins</td></tr>
+      <tr><td class="bl-k">Basico</td><td class="bl-vb">S/ ${M(c.basico)}</td><td class="bl-k">Lic. Fallecimiento</td><td class="bl-v">: 0 día(s)</td><td class="bl-k">Desc Med AT</td><td class="bl-v">: 0 día(s)</td></tr>
+      <tr><td></td><td></td><td class="bl-k">Lic. Enf. Grave</td><td class="bl-v">: 0 día(s)</td><td class="bl-k">Subs. IT AT</td><td class="bl-v">: 0 día(s)</td></tr>
+    </table>
+
+    <!-- 3 columnas -->
+    <div class="bl-cols">
+      <div class="bl-col"><div class="bl-col-h">REMUNERACIONES</div><div class="bl-col-b">${remHTML}</div></div>
+      <div class="bl-col"><div class="bl-col-h">DESCUENTOS</div><div class="bl-col-b">${descHTML}</div></div>
+      <div class="bl-col"><div class="bl-col-h">APORTES</div><div class="bl-col-b">${apoHTML}</div></div>
     </div>
 
-    <!-- 3 columnas: Remuneraciones / Descuentos / Aportes -->
-    <div style="display:grid;grid-template-columns:1.1fr 1fr 0.9fr;gap:10px;margin-bottom:10px">
-      <div style="border:1px solid #d6e0df;border-radius:6px;overflow:hidden">
-        <div style="background:#1d3a5f;color:#fff;padding:4px 8px;font-weight:600;font-size:10px">REMUNERACIONES</div>
-        <table style="width:100%;border-collapse:collapse;font-size:10px">${c.ingresos.map(([l,v])=>r(l,v)).join('')}
-          <tr style="background:#f3f6f5;font-weight:700"><td style="padding:3px 8px">TOTAL</td><td style="padding:3px 8px;text-align:right">${M2(c.totalRem)}</td></tr>
-        </table>
-      </div>
-      <div style="border:1px solid #d6e0df;border-radius:6px;overflow:hidden">
-        <div style="background:#1d3a5f;color:#fff;padding:4px 8px;font-weight:600;font-size:10px">DESCUENTOS</div>
-        <table style="width:100%;border-collapse:collapse;font-size:10px">${c.descDetalle.map(([l,v])=>r(l,v)).join('')}
-          <tr style="background:#f3f6f5;font-weight:700"><td style="padding:3px 8px">TOTAL</td><td style="padding:3px 8px;text-align:right">${M2(c.totalDesc)}</td></tr>
-        </table>
-      </div>
-      <div style="border:1px solid #d6e0df;border-radius:6px;overflow:hidden">
-        <div style="background:#1d3a5f;color:#fff;padding:4px 8px;font-weight:600;font-size:10px">APORTES EMPLEADOR</div>
-        <table style="width:100%;border-collapse:collapse;font-size:10px">${r('EsSalud (9%)', c.essalud)}
-          <tr style="background:#f3f6f5;font-weight:700"><td style="padding:3px 8px">TOTAL</td><td style="padding:3px 8px;text-align:right">${M2(c.essalud)}</td></tr>
-        </table>
-      </div>
-    </div>
+    <!-- Totales -->
+    <table class="bl-tot">
+      <tr>
+        <td>TOTAL REMUNERACIONES</td><td class="bl-n">S/ ${M(c.totalRem)}</td>
+        <td>TOTAL DESCUENTOS</td><td class="bl-n">S/ ${M(c.totalDesc)}</td>
+        <td>TOTAL APORTES</td><td class="bl-n">S/ ${M(c.essalud)}</td>
+      </tr>
+    </table>
+    <div class="bl-neto"><span>NETO A PAGAR</span><span>S/ ${M(c.neto)}</span></div>
+    ${pagada?'<div class="bl-pagada">✓ PAGADA</div>':''}
 
-    <!-- Neto -->
-    <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
-      <div style="background:#059669;color:#fff;border-radius:6px;padding:8px 20px;display:flex;gap:16px;align-items:center">
-        <span style="font-weight:600;font-size:11px">NETO A PAGAR</span>
-        <span style="font-weight:700;font-size:16px">${M2(c.neto)}</span>
+    <!-- Firmas -->
+    <div class="bl-firmas">
+      <div class="bl-firma">
+        <img src="${MISAGI_LOGO}" class="bl-firma-logo" alt="" />
+        <div class="bl-firma-line">EMPLEADOR</div>
+        <div class="bl-firma-sub">Max J. Amachi Reyes · GERENTE GENERAL</div>
       </div>
-    </div>
-    ${pagada ? '<div style="text-align:right;color:#059669;font-weight:600;font-size:11px;margin-bottom:6px">✓ PAGADA</div>' : ''}
-
-    <p style="font-size:8.5px;color:#9aa;margin:4px 0 28px">${esc(p.banco||'')} ${esc(p.cuenta? '· Cta. '+p.cuenta:'')} — Documento referencial generado por Sistema RRHH MISAGI.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:24px">
-      <div style="border-top:1px solid #999;padding-top:3px;text-align:center;font-size:10px;color:#5d6b6a">EMPLEADOR</div>
-      <div style="border-top:1px solid #999;padding-top:3px;text-align:center;font-size:10px;color:#5d6b6a">${esc(p.nombres_completos)}<br>DNI ${esc(p.dni||'')}</div>
+      <div class="bl-firma">
+        <div class="bl-firma-line bl-firma-line2">${esc(p.nombres_completos)}</div>
+        <div class="bl-firma-sub">${esc(p.dni||'')}</div>
+      </div>
     </div>
   </div>`;
 }
